@@ -1,3 +1,4 @@
+import AnalyzingOverlay from "../components/AnalyzingOverlay";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
@@ -236,6 +237,8 @@ export default function UploadPage() {
           <RecentScansSidebar />
         </motion.div>
       </div>
+
+      <AnalyzingOverlay visible={isAnalyzing} />
     </div>
   );
 }
