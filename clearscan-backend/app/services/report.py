@@ -90,24 +90,34 @@ This is a Spine MRI. Use MRI-specific terminology:
 }
 
 
+# ─── Helper ───────────────────────────────────────────────────────────────────
+
+def _get_scan_type_str(scan_type) -> str:
+    """Safely extract string value from ScanType enum or plain string."""
+    if hasattr(scan_type, 'value'):
+        return scan_type.value
+    return str(scan_type)
+
+
+# ─── Prompt Builder ───────────────────────────────────────────────────────────
+
 def _build_user_prompt(
     findings: list[Finding],
     metadata: PatientMetadata,
     scan_date: str | None,
 ) -> str:
-    date_str    = scan_date or date.today().isoformat()
-    age_str     = f"{metadata.age}y" if metadata.age else "Age unknown"
-    sex_str     = metadata.sex or "Sex unknown"
-    patient_str = f"Patient: {metadata.patient_id} | {age_str} | {sex_str}"
+    date_str     = scan_date or date.today().isoformat()
+    age_str      = f"{metadata.age}y" if metadata.age else "Age unknown"
+    sex_str      = metadata.sex or "Sex unknown"
+    patient_str  = f"Patient: {metadata.patient_id} | {age_str} | {sex_str}"
+    scan_type_str = _get_scan_type_str(metadata.scan_type)
 
     finding_lines = [
         f"  {i}. {f.label} — confidence {f.confidence * 100:.0f}%, "
-        f"uncertainty {f.uncertainty}"
+        f"uncertainty {f.uncertainty.value if hasattr(f.uncertainty, 'value') else f.uncertainty}"
         for i, f in enumerate(findings, 1)
     ] or ["  No significant findings detected."]
 
-    # Get modality-specific context
-    scan_type_str  = str(metadata.scan_type)
     modality_context = CT_CONTEXT.get(scan_type_str, "")
 
     return (
@@ -142,9 +152,11 @@ def generate_report_with_gpt(
             model_name=settings.gemini_model,
             system_instruction=SYSTEM_PROMPT,
         )
-        user_prompt = _build_user_prompt(findings, metadata, scan_date)
+        user_prompt   = _build_user_prompt(findings, metadata, scan_date)
+        scan_type_str = _get_scan_type_str(metadata.scan_type)
+
         logger.info(
-            f"Calling Gemini for {metadata.scan_type} report. "
+            f"Calling Gemini for {scan_type_str} report. "
             f"Model: {settings.gemini_model}"
         )
 
@@ -195,7 +207,6 @@ def is_llm_configured() -> bool:
 
 # ─── Rule-Based Fallback ──────────────────────────────────────────────────────
 
-# Technique descriptions per scan type
 TECHNIQUE_MAP = {
     "Chest X-ray":   "Posteroanterior (PA) chest radiograph in standard inspiration.",
     "Chest CT":      "CT of the chest performed with standard protocol. "
@@ -226,11 +237,12 @@ def _fallback_report(
     findings: list[Finding],
     metadata: PatientMetadata,
 ) -> ReportDraft:
-    scan = str(metadata.scan_type)
+    scan = _get_scan_type_str(metadata.scan_type)
 
     if findings:
         summary   = "; ".join(
-            f"{f.label} ({f.confidence * 100:.0f}%, {f.uncertainty} uncertainty)"
+            f"{f.label} ({f.confidence * 100:.0f}%, "
+            f"{f.uncertainty.value if hasattr(f.uncertainty, 'value') else f.uncertainty} uncertainty)"
             for f in findings
         ) + "."
         top_label = findings[0].label
