@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: clearscan-backend
+    runtime: python
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: MODEL_NAME
+        value: densenet121-res224-all
+      - key: MC_DROPOUT_PASSES
+        value: "10"
+      - key: ALLOWED_ORIGINS
+        value: https://clearscan.vercel.app
+    healthCheckPath: /health
+    autoDeploy: true
