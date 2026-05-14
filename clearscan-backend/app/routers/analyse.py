@@ -24,10 +24,7 @@ async def analyse_scan(
         default='{"patient_id":"ANON","scan_type":"Chest X-ray"}'
     ),
 ):
-    if not is_model_loaded():
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail="AI model is not loaded yet.")
-
+    
     if image.content_type not in ALLOWED_TYPES:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                             detail=f"Unsupported type: {image.content_type}.")
@@ -35,8 +32,10 @@ async def analyse_scan(
     image_bytes = await image.read()
     if len(image_bytes) > MAX_FILE_SIZE:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                            detail="File too large. Max 10MB.")
-
+                        detail="File too large. Max 10MB.")
+    if not is_model_loaded():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="AI model is not loaded yet.")
     try:
         meta_dict = json.loads(metadata)
         patient   = PatientMetadata(**meta_dict)
