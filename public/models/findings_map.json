@@ -1,0 +1,20 @@
+{
+  "0": "Atelectasis",
+  "1": "Consolidation",
+  "2": "Infiltration",
+  "3": "Pneumothorax",
+  "4": "Edema",
+  "5": "Emphysema",
+  "6": "Fibrosis",
+  "7": "Effusion",
+  "8": "Pneumonia",
+  "9": "Pleural_Thickening",
+  "10": "Cardiomegaly",
+  "11": "Nodule",
+  "12": "Mass",
+  "13": "Hernia",
+  "14": "Lung Lesion",
+  "15": "Fracture",
+  "16": "Lung Opacity",
+  "17": "Enlarged Cardiomediastinum"
+}
