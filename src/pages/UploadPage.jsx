@@ -1,57 +1,186 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Cpu, Zap, WifiOff, ShieldCheck } from "lucide-react";
 import toast from "react-hot-toast";
 import useScanStore from "../store/useScanStore";
-import { mockAnalysis, generateScanId } from "../lib/mockData";
+import { generateScanId } from "../lib/mockData";
 import UploadDropZone from "../components/UploadDropZone";
 import RecentScansSidebar from "../components/RecentScansSidebar";
 import StatPill from "../components/StatPill";
+import AnalyzingOverlay from "../components/AnalyzingOverlay";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL ||
+  'https://clearscan-backend-547405293580.asia-south1.run.app';
 
 export default function UploadPage() {
-  const navigate          = useNavigate();
-  const setCurrentScan    = useScanStore((s) => s.setCurrentScan);
+  const navigate = useNavigate();
+  const setCurrentScan = useScanStore((s) => s.setCurrentScan);
   const setCurrentAnalysis = useScanStore((s) => s.setCurrentAnalysis);
-  const setIsAnalyzing    = useScanStore((s) => s.setIsAnalyzing);
-  const addToHistory      = useScanStore((s) => s.addToHistory);
-  const isAnalyzing       = useScanStore((s) => s.isAnalyzing);
+  const setCurrentReport = useScanStore((s) => s.setCurrentReport);
+  const setIsAnalyzing = useScanStore((s) => s.setIsAnalyzing);
+  const addToHistory = useScanStore((s) => s.addToHistory);
+  const isAnalyzing = useScanStore((s) => s.isAnalyzing);
 
-  async function handleAnalyze(file, previewUrl) {
+  const [pendingFile, setPendingFile] = useState(null);
+  const [scanType, setScanType] = useState('Chest X-ray');
+
+  function handleFileAccepted(fileData) {
+    setPendingFile(fileData);
+  }
+
+  function handleClear() {
+    setPendingFile(null);
+  }
+
+  async function handleAnalyze() {
+    if (!pendingFile) return;
+
     const scanId = generateScanId();
 
-    // 1. Save scan to store
     setCurrentScan({
-      id:         scanId,
-      name:       file.name,
-      previewUrl,
-      size:       file.size,
-      type:       file.type,
+      id: scanId,
+      name: pendingFile.name,
+      previewUrl: pendingFile.previewUrl,
+      size: pendingFile.size,
+      type: pendingFile.type,
     });
 
-    // 2. Simulate analysis
     setIsAnalyzing(true);
-    await new Promise((r) => setTimeout(r, 1600));
 
-    const analysis = { ...mockAnalysis };
-    setCurrentAnalysis(analysis); // also auto-sets currentReport
+    try {
+      // ── Step 1: Call /analyse ─────────────────────────────────────────
+      const formData = new FormData();
+      formData.append('image', pendingFile.file);
+      formData.append('metadata', JSON.stringify({
+        patient_id: scanId,
+        scan_type: scanType,
+      }));
 
-    // 3. Add to history with the shape HistoryPage expects
-    addToHistory({
-      id:           scanId,
-      scan_type:    analysis.scan_type,
-      overall_risk: analysis.overall_risk,
-      findings:     analysis.findings,
-      date:         new Date().toISOString(),
-      previewUrl,
-    });
+      toast.loading('Analysing scan with AI...', { id: 'analyse' });
 
-    setIsAnalyzing(false);
-    toast.success("Analysis complete");
-    navigate("/results");
+      const analyseRes = await fetch(`${API_BASE}/analyse`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!analyseRes.ok) throw new Error('Analysis failed');
+      const analyseData = await analyseRes.json();
+      toast.dismiss('analyse');
+
+      // ── Step 2: Call /report ──────────────────────────────────────────
+      toast.loading('Generating report with Gemini...', { id: 'report' });
+
+      const reportRes = await fetch(`${API_BASE}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          findings: analyseData.findings,
+          metadata: {
+            patient_id: scanId,
+            scan_type: scanType,
+          },
+          scan_date: new Date().toISOString().split('T')[0],
+        }),
+      });
+
+      if (!reportRes.ok) throw new Error('Report generation failed');
+      const reportData = await reportRes.json();
+      toast.dismiss('report');
+
+      // ── Step 3: Build analysis object ────────────────────────────────
+      const realAnalysis = {
+        findings: analyseData.findings.map(f => ({
+          name: f.label,
+          label: f.label,
+          confidence: f.confidence,
+          uncertainty: f.uncertainty,
+          risk_level: f.confidence > 0.7 ? 'HIGH' :
+            f.confidence > 0.4 ? 'MEDIUM' : 'LOW',
+        })),
+        overall_risk: analyseData.risk_level,
+        heatmap_base64: analyseData.heatmap_base64,
+        scan_type: scanType,
+        analyzed_at: new Date().toISOString(),
+        model_version: analyseData.model_version,
+      };
+
+      // ── Step 4: Build report sections ────────────────────────────────
+      const draft = reportData.draft;
+      const realReport = {
+        id: scanId,
+        scan_type: scanType,
+        overall_risk: analyseData.risk_level,
+        generated_at: new Date().toISOString(),
+        is_fallback: reportData.is_fallback,
+        sections: [
+          {
+            id: 'clinical_indication',
+            title: 'Clinical Indication',
+            content: draft.indication,
+          },
+          {
+            id: 'technique',
+            title: 'Technique',
+            content: draft.technique,
+          },
+          {
+            id: 'findings',
+            title: 'Findings',
+            content: draft.findings,
+          },
+          {
+            id: 'impression',
+            title: 'Impression',
+            content: draft.impression,
+          },
+          {
+            id: 'recommendation',
+            title: 'Recommendation',
+            content: draft.recommendation,
+          },
+          {
+            id: 'disclaimer',
+            title: 'AI Disclaimer',
+            content: draft.disclaimer ||
+              'This report was generated by ClearScan AI (DenseNet-121, ' +
+              'NIH ChestX-ray14). All findings require review and approval ' +
+              'by a licensed radiologist before clinical use.',
+          },
+        ],
+      };
+
+      // ── Step 5: Save to store ─────────────────────────────────────────
+      setCurrentAnalysis(realAnalysis);
+      setCurrentReport(realReport);
+
+      addToHistory({
+        id: scanId,
+        scan_type: realAnalysis.scan_type,
+        overall_risk: realAnalysis.overall_risk,
+        findings: realAnalysis.findings,
+        date: new Date().toISOString(),
+        previewUrl: pendingFile.previewUrl,
+      });
+
+      toast.success(`${scanType} analysis complete ✅`);
+      navigate('/results');
+
+    } catch (err) {
+      console.error(err);
+      toast.dismiss('analyse');
+      toast.dismiss('report');
+      toast.error(`Failed: ${err.message}`);
+    } finally {
+      setIsAnalyzing(false);
+    }
   }
 
   return (
     <div className="min-h-screen px-4 sm:px-6 lg:px-8 py-12 max-w-7xl mx-auto">
+
+      {/* Analyzing overlay */}
+      <AnalyzingOverlay visible={isAnalyzing} />
 
       {/* ── Hero ── */}
       <motion.div
@@ -69,9 +198,9 @@ export default function UploadPage() {
           <span className="text-blue-400">in seconds</span>
         </h1>
         <p className="text-slate-400 text-base sm:text-lg max-w-xl mx-auto leading-relaxed">
-          Upload a chest X-ray or CT scan. ClearScan AI detects pathologies,
-          generates Grad-CAM heatmaps, and produces a RADLEX-structured report —
-          entirely offline.
+          Upload a chest X-ray, CT scan, or MRI. ClearScan AI detects
+          pathologies, generates Grad-CAM heatmaps, and produces a
+          RADLEX-structured report — entirely offline.
         </p>
       </motion.div>
 
@@ -82,10 +211,10 @@ export default function UploadPage() {
         transition={{ duration: 0.4, delay: 0.1 }}
         className="flex flex-wrap justify-center gap-3 mb-10"
       >
-        <StatPill icon={Cpu}        value="14+"    label="Pathologies detected" />
-        <StatPill icon={Zap}        value="<2s"    label="Avg. analysis time"   />
-        <StatPill icon={WifiOff}    value="100%"   label="Offline capable"      />
-        <StatPill icon={ShieldCheck} value="HIPAA" label="Privacy-aware"        />
+        <StatPill icon={Cpu} value="14+" label="Pathologies detected" />
+        <StatPill icon={Zap} value="<2s" label="Avg. analysis time" />
+        <StatPill icon={WifiOff} value="100%" label="Offline capable" />
+        <StatPill icon={ShieldCheck} value="HIPAA" label="Privacy-aware" />
       </motion.div>
 
       {/* ── Main layout ── */}
@@ -96,7 +225,14 @@ export default function UploadPage() {
           transition={{ duration: 0.45, delay: 0.15 }}
           className="lg:col-span-2"
         >
-          <UploadDropZone onAnalyze={handleAnalyze} isAnalyzing={isAnalyzing} />
+          <UploadDropZone
+            onFileAccepted={handleFileAccepted}
+            currentScan={pendingFile}
+            onClear={handleClear}
+            onAnalyze={handleAnalyze}
+            isAnalyzing={isAnalyzing}
+            onScanTypeChange={setScanType}
+          />
         </motion.div>
         <motion.div
           initial={{ opacity: 0, x: 16 }}
@@ -110,4 +246,3 @@ export default function UploadPage() {
     </div>
   );
 }
-

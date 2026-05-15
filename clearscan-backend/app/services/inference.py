@@ -2,6 +2,7 @@
 ML Inference Service
 Handles model loading, preprocessing, MC Dropout inference,
 Grad-CAM heatmap generation, and ONNX export.
+Supports all scan types — model is scan-agnostic.
 """
 
 import io
@@ -13,7 +14,7 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-_model = None
+_model       = None
 _pathologies: list[str] = []
 _model_loaded = False
 
@@ -42,31 +43,61 @@ def is_model_loaded() -> bool:
 
 
 def preprocess_image(image_bytes: bytes):
+    """
+    Convert raw image bytes to normalised tensor.
+    Handles all scan types — converts to grayscale and normalises.
+    CT scans may be 16-bit TIFF; we handle that too.
+    """
     import torch
-    img = Image.open(io.BytesIO(image_bytes)).convert("L")
-    img = img.resize((224, 224), Image.LANCZOS)
-    img_array = np.array(img).astype(np.float32)
-    img_array = (img_array / 255.0) * 2048 - 1024
-    tensor = torch.from_numpy(img_array).unsqueeze(0).unsqueeze(0)
-    return tensor, img
+
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+
+        # Handle 16-bit CT images
+        if img.mode == "I;16" or img.mode == "I":
+            img_array = np.array(img).astype(np.float32)
+            img_array = (img_array / 65535.0) * 2048 - 1024
+        else:
+            img = img.convert("L")
+            img = img.resize((224, 224), Image.LANCZOS)
+            img_array = np.array(img).astype(np.float32)
+            img_array = (img_array / 255.0) * 2048 - 1024
+
+        img_array = np.clip(img_array, -1024, 1024)
+
+        tensor = torch.from_numpy(img_array).unsqueeze(0).unsqueeze(0)
+
+        # Original PIL for heatmap overlay
+        original_pil = Image.fromarray(
+            ((img_array + 1024) / 2048 * 255).clip(0, 255).astype(np.uint8)
+        )
+        return tensor, original_pil
+
+    except Exception as e:
+        logger.error(f"Image preprocessing failed: {e}")
+        raise
 
 
 def run_mc_dropout(image_bytes: bytes, n_passes: int = 10) -> list[dict]:
     import torch
     if not _model_loaded:
         raise RuntimeError("Model not loaded")
+
     tensor, _ = preprocess_image(image_bytes)
     all_probs = []
     _model.train()
+
     with torch.no_grad():
         for _ in range(n_passes):
             output = _model(tensor)
-            probs = torch.sigmoid(output[0]).cpu().numpy()
+            probs  = torch.sigmoid(output[0]).cpu().numpy()
             all_probs.append(probs)
+
     _model.eval()
-    all_probs = np.array(all_probs)
+    all_probs  = np.array(all_probs)
     mean_probs = all_probs.mean(axis=0)
     std_probs  = all_probs.std(axis=0)
+
     results = []
     for label, mean, std in zip(_pathologies, mean_probs, std_probs):
         if std < 0.08:
@@ -76,20 +107,27 @@ def run_mc_dropout(image_bytes: bytes, n_passes: int = 10) -> list[dict]:
         else:
             uncertainty = "High"
         results.append({
-            "label": label,
-            "confidence": float(mean),
-            "std": float(std),
+            "label":       label,
+            "confidence":  float(mean),
+            "std":         float(std),
             "uncertainty": uncertainty,
         })
+
     results.sort(key=lambda x: x["confidence"], reverse=True)
     return results[:5]
 
 
 HIGH_SEVERITY_LABELS = {
+    # Chest X-ray / CT
     "Pneumothorax", "Effusion", "Cardiomegaly",
-    "Mass", "Nodule", "Consolidation", "Pneumonia"
+    "Mass", "Nodule", "Consolidation", "Pneumonia",
+    "Lung Lesion", "Lung Opacity", "Fracture",
+    "Enlarged Cardiomediastinum", "Edema",
 }
-CRITICAL_LABELS = {"Pneumothorax", "Mass"}
+
+CRITICAL_LABELS = {
+    "Pneumothorax", "Mass", "Fracture"
+}
 
 
 def calculate_risk_level(findings: list[dict]) -> str:
@@ -107,21 +145,24 @@ def calculate_risk_level(findings: list[dict]) -> str:
 
 def generate_gradcam_heatmap(
     image_bytes: bytes,
-    target_label: Optional[str] = None
+    target_label: Optional[str] = None,
 ) -> str:
     import torch
     from pytorch_grad_cam import GradCAMPlusPlus
     from pytorch_grad_cam.utils.image import show_cam_on_image
+
     if not _model_loaded:
         raise RuntimeError("Model not loaded")
+
     tensor, original_pil = preprocess_image(image_bytes)
     target_layers = [_model.features.denseblock4]
+
     if target_label and target_label in _pathologies:
         target_idx = _pathologies.index(target_label)
     else:
         with torch.no_grad():
             output = _model(tensor)
-            probs = torch.sigmoid(output[0]).cpu().numpy()
+            probs  = torch.sigmoid(output[0]).cpu().numpy()
         target_idx = int(np.argmax(probs))
 
     class ClassTarget:
@@ -137,11 +178,13 @@ def generate_gradcam_heatmap(
         input_tensor=tensor,
         targets=[ClassTarget(target_idx)]
     )[0]
+
     original_rgb = original_pil.convert("RGB").resize((224, 224))
     original_np  = np.array(original_rgb).astype(np.float32) / 255.0
-    overlaid = show_cam_on_image(original_np, grayscale_cam, use_rgb=True)
+    overlaid     = show_cam_on_image(original_np, grayscale_cam, use_rgb=True)
+
     result_img = Image.fromarray(overlaid)
-    buffer = io.BytesIO()
+    buffer     = io.BytesIO()
     result_img.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
@@ -154,13 +197,18 @@ def export_to_onnx(output_path: str = "ml/model.onnx") -> bool:
     try:
         torch.onnx.export(
             _model, dummy_input, output_path,
-            opset_version=17,
+            opset_version=14,
             input_names=["input"],
             output_names=["output"],
-            dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
+            dynamic_axes={
+                "input":  {0: "batch_size"},
+                "output": {0: "batch_size"},
+            },
             export_params=True,
+            verbose=False,
+            dynamo=False,
         )
-        logger.info(f"ONNX model exported to {output_path}")
+        logger.info(f"ONNX exported to {output_path}")
         return True
     except Exception as e:
         logger.error(f"ONNX export failed: {e}")

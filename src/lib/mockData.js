@@ -1,40 +1,44 @@
 /**
  * Mock data matching the backend API response shape.
  * Backend contract:
- *   POST /analyze       → { findings[], overall_risk, heatmap_base64 }
- *   POST /generate-report → SSE stream of report sections
- *   GET  /health        → { status, model_loaded, version }
+ *   POST /analyse         → { findings[], overall_risk, heatmap_base64 }
+ *   POST /report          → { draft: { indication, technique, findings, impression, recommendation } }
+ *   GET  /health          → { status, model_loaded, llm_ready, version }
  */
 
 export const mockFindings = [
   {
     name: 'Pneumonia',
+    label: 'Pneumonia',
     confidence: 0.87,
-    uncertainty: 0.04,
+    uncertainty: 'Low',
     risk_level: 'HIGH',
     anatomical_region: 'Right lower lobe',
     recommendation: 'Urgent radiologist review recommended. Consider sputum culture and CRP.',
   },
   {
     name: 'Pleural Effusion',
+    label: 'Effusion',
     confidence: 0.71,
-    uncertainty: 0.09,
+    uncertainty: 'Medium',
     risk_level: 'MEDIUM',
     anatomical_region: 'Left costophrenic angle',
     recommendation: 'Correlate with clinical symptoms. Consider lateral decubitus view.',
   },
   {
     name: 'Cardiomegaly',
+    label: 'Cardiomegaly',
     confidence: 0.52,
-    uncertainty: 0.18,
+    uncertainty: 'High',
     risk_level: 'LOW',
     anatomical_region: 'Cardiac silhouette',
     recommendation: 'UNCERTAIN — correlate clinically. Cardiothoracic ratio borderline.',
   },
   {
     name: 'Atelectasis',
+    label: 'Atelectasis',
     confidence: 0.34,
-    uncertainty: 0.12,
+    uncertainty: 'Low',
     risk_level: 'LOW',
     anatomical_region: 'Right middle lobe',
     recommendation: 'Low probability finding. Follow-up imaging not currently indicated.',
@@ -44,18 +48,49 @@ export const mockFindings = [
 export const mockAnalysis = {
   findings: mockFindings,
   overall_risk: 'HIGH',
-  heatmap_base64: null, // null = use simulated CSS overlay
+  heatmap_base64: null,
   scan_type: 'Chest X-ray',
   analyzed_at: new Date().toISOString(),
-  model_version: 'clearscan-v1.0.3',
+  model_version: 'densenet121-res224-all',
 };
 
 export const mockReport = {
-  clinical_indication: 'Adult patient presenting with productive cough, fever (38.7°C), and right-sided pleuritic chest pain for 3 days. No known prior pulmonary disease.',
-  technique: 'PA and lateral chest radiographs were obtained in inspiration with adequate exposure and patient positioning.',
-  findings: 'There is a focal area of airspace consolidation in the right lower lobe with associated air bronchograms, consistent with lobar pneumonia. A small left-sided pleural effusion is noted at the costophrenic angle. The cardiac silhouette is borderline enlarged with a cardiothoracic ratio of approximately 0.51. The mediastinum is unremarkable. No pneumothorax. Visualized osseous structures are intact.',
-  impression: '1. Right lower lobe pneumonia, high confidence (87%).\n2. Small left pleural effusion, likely parapneumonic.\n3. Borderline cardiomegaly — clinical correlation advised.',
-  recommendation: 'Initiate empirical antibiotic therapy per institutional protocol. Repeat chest radiograph in 4–6 weeks to confirm resolution. Consider echocardiography for borderline cardiac silhouette if clinically indicated.',
+  id: 'RPT-0001',
+  scan_type: 'Chest X-ray',
+  overall_risk: 'HIGH',
+  generated_at: new Date().toISOString(),
+  sections: [
+    {
+      id: 'clinical_indication',
+      title: 'Clinical Indication',
+      content: 'Adult patient presenting with productive cough, fever (38.7°C), and right-sided pleuritic chest pain for 3 days. No known prior pulmonary disease.',
+    },
+    {
+      id: 'technique',
+      title: 'Technique',
+      content: 'PA and lateral chest radiographs were obtained in inspiration with adequate exposure and patient positioning. Standard digital radiography protocol applied.',
+    },
+    {
+      id: 'findings',
+      title: 'Findings',
+      content: 'There is a focal area of airspace consolidation in the right lower lobe with associated air bronchograms, consistent with lobar pneumonia (confidence: 87%, uncertainty: Low). A small left-sided pleural effusion is noted at the costophrenic angle (confidence: 71%, uncertainty: Medium). The cardiac silhouette is borderline enlarged with a cardiothoracic ratio of approximately 0.51 (confidence: 52%, uncertainty: High). The mediastinum is unremarkable. No pneumothorax identified. Visualized osseous structures are intact.',
+    },
+    {
+      id: 'impression',
+      title: 'Impression',
+      content: '1. Right lower lobe pneumonia — high confidence (87%), low uncertainty.\n2. Small left pleural effusion — likely parapneumonic, medium confidence (71%).\n3. Borderline cardiomegaly — clinical correlation advised, high uncertainty (52%).',
+    },
+    {
+      id: 'recommendation',
+      title: 'Recommendation',
+      content: 'Initiate empirical antibiotic therapy per institutional protocol. Repeat chest radiograph in 4–6 weeks to confirm resolution. Consider echocardiography for borderline cardiac silhouette if clinically indicated. Urgent radiologist review recommended given HIGH overall risk level.',
+    },
+    {
+      id: 'disclaimer',
+      title: 'AI Disclaimer',
+      content: 'This report was generated by ClearScan AI using DenseNet-121 trained on the NIH ChestX-ray14 dataset (112,120 images). Confidence scores reflect model probability estimates. All findings require review and approval by a licensed radiologist before any clinical decisions are made. This AI tool is intended to assist, not replace, professional radiological judgment.',
+    },
+  ],
 };
 
 export const mockHistory = [
@@ -63,46 +98,46 @@ export const mockHistory = [
     id: 'scan_001',
     date: '2026-01-14',
     scan_type: 'Chest X-ray',
-    primary_finding: 'Pneumonia',
-    risk_level: 'HIGH',
+    overall_risk: 'HIGH',
+    findings: mockFindings,
     report_status: 'Generated',
   },
   {
     id: 'scan_002',
     date: '2026-01-12',
     scan_type: 'Chest CT',
-    primary_finding: 'Pleural Effusion',
-    risk_level: 'MEDIUM',
+    overall_risk: 'MEDIUM',
+    findings: [],
     report_status: 'Generated',
   },
   {
     id: 'scan_003',
     date: '2026-01-09',
     scan_type: 'Brain MRI',
-    primary_finding: 'No acute findings',
-    risk_level: 'LOW',
+    overall_risk: 'LOW',
+    findings: [],
     report_status: 'Generated',
   },
   {
     id: 'scan_004',
     date: '2026-01-07',
     scan_type: 'Chest X-ray',
-    primary_finding: 'Atelectasis',
-    risk_level: 'LOW',
+    overall_risk: 'LOW',
+    findings: [],
     report_status: 'Draft',
   },
   {
     id: 'scan_005',
     date: '2026-01-04',
     scan_type: 'Chest X-ray',
-    primary_finding: 'Cardiomegaly',
-    risk_level: 'MEDIUM',
+    overall_risk: 'MEDIUM',
+    findings: [],
     report_status: 'Generated',
   },
 ];
 
 /**
- * Generates a unique-ish scan ID for new uploads.
+ * Generates a unique scan ID for new uploads.
  */
 export function generateScanId() {
   return `scan_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;

@@ -3,6 +3,8 @@ from typing import Optional
 from enum import Enum
 
 
+# ─── Enums ────────────────────────────────────────────────────────────────────
+
 class RiskLevel(str, Enum):
     CRITICAL = "CRITICAL"
     HIGH     = "HIGH"
@@ -15,16 +17,22 @@ class UncertaintyLevel(str, Enum):
     HIGH   = "High"
 
 class ScanType(str, Enum):
-    CHEST_XRAY = "Chest X-ray"
-    CT_SCAN    = "CT Scan"
-    MRI        = "MRI"
+    CHEST_XRAY   = "Chest X-ray"
+    CHEST_CT     = "Chest CT"
+    ABDOMEN_CT   = "Abdomen CT"
+    BRAIN_CT     = "Brain CT"
+    FULL_BODY_CT = "Full Body CT"
+    MRI_BRAIN    = "Brain MRI"
+    MRI_SPINE    = "Spine MRI"
 
+
+# ─── Analyse Endpoint ─────────────────────────────────────────────────────────
 
 class PatientMetadata(BaseModel):
-    patient_id:  Optional[str] = Field(default="ANON")
-    age:         Optional[int] = Field(default=None, ge=0, le=120)
-    sex:         Optional[str] = Field(default=None, pattern="^(M|F|Other)$")
-    scan_type:   ScanType      = Field(default=ScanType.CHEST_XRAY)
+    patient_id: Optional[str]  = Field(default="ANON")
+    age:        Optional[int]  = Field(default=None, ge=0, le=120)
+    sex:        Optional[str]  = Field(default=None, pattern="^(M|F|Other)$")
+    scan_type:  ScanType       = Field(default=ScanType.CHEST_XRAY)
 
 class Finding(BaseModel):
     label:       str
@@ -35,10 +43,12 @@ class AnalyseResponse(BaseModel):
     findings:       list[Finding]
     heatmap_base64: str
     risk_level:     RiskLevel
-    model_version:  str = "densenet121-res224-all"
-    inference_mode: str = "online"
+    model_version:  str           = "densenet121-res224-all"
+    inference_mode: str           = "online"
     message:        Optional[str] = None
 
+
+# ─── Report Endpoint ──────────────────────────────────────────────────────────
 
 class ReportRequest(BaseModel):
     findings:  list[Finding]
@@ -62,9 +72,11 @@ class ReportResponse(BaseModel):
     is_fallback: bool = False
 
 
+# ─── Health Endpoint ──────────────────────────────────────────────────────────
+
 class HealthResponse(BaseModel):
-    status:       str = "ok"
+    status:       str  = "ok"
     model_loaded: bool
     llm_ready:    bool
-    version:      str = "1.0.0"
+    version:      str  = "1.0.0"
     environment:  str

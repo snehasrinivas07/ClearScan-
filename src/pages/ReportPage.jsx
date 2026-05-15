@@ -1,9 +1,9 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText, Download, ArrowLeft, Printer,
-  RotateCcw, CheckCircle2, Activity,
+  RotateCcw, CheckCircle2, Activity, Sparkles,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import useScanStore from "../store/useScanStore";
@@ -12,7 +12,7 @@ import { cn, getRiskBadgeClasses, formatConfidence } from "../lib/utils";
 import ReportSection from "../components/ReportSection";
 import ReportMetaBar from "../components/ReportMetaBar";
 
-// ─── Empty state ─────────────────────────────────────────────────────────────
+// ─── Empty state ──────────────────────────────────────────────────────────────
 function EmptyState() {
   const navigate = useNavigate();
   return (
@@ -44,17 +44,15 @@ function EmptyState() {
   );
 }
 
-// ─── PDF export helper ────────────────────────────────────────────────────────
+// ─── PDF export ───────────────────────────────────────────────────────────────
 async function exportToPDF(reportData, sections) {
   const { jsPDF } = await import("jspdf");
-
   const doc = new jsPDF({ unit: "mm", format: "a4" });
-  const pageW  = doc.internal.pageSize.getWidth();
+  const pageW = doc.internal.pageSize.getWidth();
   const margin = 18;
-  const col    = pageW - margin * 2;
-  let y        = margin;
+  const col = pageW - margin * 2;
+  let y = margin;
 
-  // ── Header ──
   doc.setFillColor(15, 23, 42);
   doc.rect(0, 0, pageW, 28, "F");
   doc.setFontSize(16);
@@ -64,12 +62,15 @@ async function exportToPDF(reportData, sections) {
   doc.setFontSize(8);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(148, 163, 184);
-  doc.text(`RADLEX v4.1  ·  ${reportData.scan_type ?? "Chest X-Ray"}  ·  ${reportData.id ?? "RPT-0001"}`, margin, 24);
+  doc.text(
+    `RADLEX v4.1  ·  ${reportData.scan_type ?? "Chest X-Ray"}  ·  ${reportData.id ?? "RPT-0001"}`,
+    margin, 24
+  );
   y = 38;
 
-  // ── Overall risk ──
   const riskColors = {
     LOW: [34, 197, 94], MEDIUM: [245, 158, 11],
+    MODERATE: [245, 158, 11],
     HIGH: [239, 68, 68], CRITICAL: [220, 38, 38],
   };
   const rc = riskColors[reportData.overall_risk] ?? [59, 130, 246];
@@ -81,23 +82,17 @@ async function exportToPDF(reportData, sections) {
   doc.text(`Overall Risk: ${reportData.overall_risk ?? "—"}`, margin + 4, y + 7);
   y += 16;
 
-  // ── Sections ──
   sections.forEach((s) => {
     if (y > 260) { doc.addPage(); y = margin; }
-
     doc.setFontSize(9);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(148, 163, 184);
     doc.text(s.title.toUpperCase(), margin, y);
     y += 5;
-
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.setTextColor(30, 41, 59);
-
-    // Draw section background
     const lines = doc.splitTextToSize(s.content, col - 6);
-    const boxH  = lines.length * 5 + 6;
+    const boxH = lines.length * 5 + 6;
     doc.setFillColor(241, 245, 249);
     doc.roundedRect(margin, y, col, boxH, 2, 2, "F");
     doc.setTextColor(30, 41, 59);
@@ -105,7 +100,6 @@ async function exportToPDF(reportData, sections) {
     y += boxH + 6;
   });
 
-  // ── Footer ──
   doc.setFontSize(7);
   doc.setTextColor(148, 163, 184);
   doc.text(
@@ -113,30 +107,39 @@ async function exportToPDF(reportData, sections) {
     margin,
     doc.internal.pageSize.getHeight() - 8
   );
-
   doc.save(`ClearScan-Report-${reportData.id ?? "export"}.pdf`);
 }
 
-// ─── Main page ───────────────────────────────────────────────────────────────
-export default function ReportPage() {
-  const navigate        = useNavigate();
-  const storedReport    = useScanStore((s) => s.currentReport);
-  const storedAnalysis  = useScanStore((s) => s.currentAnalysis);
-  const setCurrentReport = useScanStore((s) => s.setCurrentReport);
+// ─── Typewriter text component ────────────────────────────────────────────────
+function TypewriterText({ text, delay = 0 }) {
+  return (
+    <motion.span
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay, duration: 0.4 }}
+    >
+      {text}
+    </motion.span>
+  );
+}
 
-  const analysis  = storedAnalysis ?? mockAnalysis;
+// ─── Main page ────────────────────────────────────────────────────────────────
+export default function ReportPage() {
+  const navigate = useNavigate();
+  const storedReport = useScanStore((s) => s.currentReport);
+  const storedAnalysis = useScanStore((s) => s.currentAnalysis);
+
+  const analysis = storedAnalysis ?? mockAnalysis;
   const baseReport = storedReport ?? mockReport;
 
-  // Local editable sections state
   const [sections, setSections] = useState(
     () => baseReport.sections?.map((s) => ({ ...s })) ?? []
   );
   const [exporting, setExporting] = useState(false);
-  const [printed,   setPrinted]   = useState(false);
+  const [printed, setPrinted] = useState(false);
+  const [exportDone, setExportDone] = useState(false);
 
-  if (!storedReport && !storedAnalysis) {
-    return <EmptyState />;
-  }
+  if (!storedReport && !storedAnalysis) return <EmptyState />;
 
   function handleSectionUpdate(id, newContent) {
     setSections((prev) =>
@@ -157,6 +160,8 @@ export default function ReportPage() {
         { ...baseReport, overall_risk: analysis.overall_risk },
         sections
       );
+      setExportDone(true);
+      setTimeout(() => setExportDone(false), 3000);
       toast.success("PDF exported successfully");
     } catch (err) {
       toast.error("Export failed — check console");
@@ -172,8 +177,18 @@ export default function ReportPage() {
     setTimeout(() => setPrinted(false), 2500);
   }
 
+  // Risk glow colors
+  const riskGlow = {
+    CRITICAL: 'shadow-[0_0_30px_rgba(220,38,38,0.4)]',
+    HIGH: 'shadow-[0_0_30px_rgba(239,68,68,0.3)]',
+    MODERATE: 'shadow-[0_0_30px_rgba(245,158,11,0.3)]',
+    MEDIUM: 'shadow-[0_0_30px_rgba(245,158,11,0.3)]',
+    LOW: 'shadow-[0_0_30px_rgba(34,197,94,0.25)]',
+  }[analysis.overall_risk] ?? '';
+
   return (
     <div className="min-h-screen px-4 sm:px-6 lg:px-8 py-8 max-w-7xl mx-auto">
+
       {/* ── Page header ── */}
       <motion.div
         initial={{ opacity: 0, y: -12 }}
@@ -187,13 +202,30 @@ export default function ReportPage() {
         >
           <ArrowLeft size={12} /> Back to results
         </button>
+
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-slate-100">Report Editor</h1>
+            <div className="flex items-center gap-2 mb-1">
+              <h1 className="text-2xl sm:text-3xl font-bold text-slate-100">
+                Report Editor
+              </h1>
+              {storedReport?.is_fallback === false && (
+                <motion.span
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.3 }}
+                  className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-400"
+                >
+                  <Sparkles size={10} />
+                  Gemini Generated
+                </motion.span>
+              )}
+            </div>
             <p className="text-slate-400 mt-1 text-sm">
               Review, edit, and export the RADLEX-structured diagnostic report
             </p>
           </div>
+
           {/* Action buttons */}
           <div className="flex items-center gap-2 flex-wrap">
             <motion.button
@@ -208,7 +240,10 @@ export default function ReportPage() {
               onClick={handlePrint}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 text-sm transition-colors"
             >
-              {printed ? <CheckCircle2 size={14} className="text-green-400" /> : <Printer size={14} />}
+              {printed
+                ? <CheckCircle2 size={14} className="text-green-400" />
+                : <Printer size={14} />
+              }
               Print
             </motion.button>
             <motion.button
@@ -217,8 +252,30 @@ export default function ReportPage() {
               disabled={exporting}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-400 disabled:opacity-60 text-white font-semibold text-sm transition-colors shadow-glow-blue"
             >
-              <Download size={14} className={exporting ? "animate-bounce" : ""} />
-              {exporting ? "Exporting…" : "Export PDF"}
+              <AnimatePresence mode="wait">
+                {exportDone ? (
+                  <motion.span
+                    key="done"
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    exit={{ scale: 0 }}
+                    className="flex items-center gap-1.5"
+                  >
+                    <CheckCircle2 size={14} className="text-green-300" />
+                    Exported!
+                  </motion.span>
+                ) : (
+                  <motion.span
+                    key="export"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="flex items-center gap-1.5"
+                  >
+                    <Download size={14} className={exporting ? "animate-bounce" : ""} />
+                    {exporting ? "Exporting…" : "Export PDF"}
+                  </motion.span>
+                )}
+              </AnimatePresence>
             </motion.button>
           </div>
         </div>
@@ -229,32 +286,52 @@ export default function ReportPage() {
 
         {/* ── LEFT: editable report (3/4) ── */}
         <div className="lg:col-span-3 flex flex-col gap-4">
-          {/* Meta bar */}
-          <ReportMetaBar report={{ ...baseReport, overall_risk: analysis.overall_risk }} />
 
-          {/* Sections */}
+          {/* Meta bar */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35 }}
+          >
+            <ReportMetaBar report={{ ...baseReport, overall_risk: analysis.overall_risk }} />
+          </motion.div>
+
+          {/* Sections — staggered typewriter animation */}
           {sections.map((section, i) => (
-            <ReportSection
+            <motion.div
               key={section.id}
-              section={section}
-              index={i}
-              onUpdate={handleSectionUpdate}
-            />
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{
+                delay: i * 0.12,
+                duration: 0.45,
+                ease: 'easeOut',
+              }}
+            >
+              <ReportSection
+                section={section}
+                index={i}
+                onUpdate={handleSectionUpdate}
+              />
+            </motion.div>
           ))}
 
           {/* Bottom export nudge */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ delay: sections.length * 0.08 + 0.3 }}
+            transition={{ delay: sections.length * 0.12 + 0.3 }}
             className="rounded-xl border border-dashed border-slate-700 p-5 text-center"
           >
-            <p className="text-slate-500 text-sm mb-3">All sections reviewed? Export the final report.</p>
+            <p className="text-slate-500 text-sm mb-3">
+              All sections reviewed? Export the final report.
+            </p>
             <motion.button
-              whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
               onClick={handleExportPDF}
               disabled={exporting}
-              className="inline-flex items-center gap-2 bg-blue-500 hover:bg-blue-400 disabled:opacity-60 text-white font-semibold px-5 py-2.5 rounded-lg transition-colors text-sm"
+              className="inline-flex items-center gap-2 bg-blue-500 hover:bg-blue-400 disabled:opacity-60 text-white font-semibold px-5 py-2.5 rounded-lg transition-colors text-sm shadow-glow-blue"
             >
               <Download size={15} />
               {exporting ? "Exporting…" : "Export PDF"}
@@ -262,24 +339,34 @@ export default function ReportPage() {
           </motion.div>
         </div>
 
-        {/* ── RIGHT: sidebar summary (1/4) ── */}
+        {/* ── RIGHT: sidebar (1/4) ── */}
         <div className="lg:col-span-1">
           <div className="lg:sticky lg:top-24 flex flex-col gap-4">
 
-            {/* Overall risk */}
+            {/* Risk summary with glow */}
             <motion.div
               initial={{ opacity: 0, x: 16 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.4, delay: 0.1 }}
-              className="rounded-xl bg-bg-surface border border-slate-700 shadow-card p-4"
+              className={`rounded-xl bg-bg-surface border border-slate-700 shadow-card p-4 ${riskGlow} transition-shadow`}
             >
-              <p className="text-xs text-slate-500 uppercase tracking-widest mb-3 font-mono">Summary</p>
-              <div className={cn(
-                "text-center py-3 rounded-lg border font-bold text-lg mb-3",
-                getRiskBadgeClasses(analysis.overall_risk)
-              )}>
+              <p className="text-xs text-slate-500 uppercase tracking-widest mb-3 font-mono">
+                Summary
+              </p>
+              <motion.div
+                animate={
+                  analysis.overall_risk === 'HIGH' || analysis.overall_risk === 'CRITICAL'
+                    ? { scale: [1, 1.04, 1] }
+                    : {}
+                }
+                transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+                className={cn(
+                  "text-center py-3 rounded-lg border font-bold text-lg mb-3",
+                  getRiskBadgeClasses(analysis.overall_risk)
+                )}
+              >
                 {analysis.overall_risk}
-              </div>
+              </motion.div>
               <p className="text-xs text-slate-500 text-center">Overall risk level</p>
             </motion.div>
 
@@ -290,18 +377,33 @@ export default function ReportPage() {
               transition={{ duration: 0.4, delay: 0.18 }}
               className="rounded-xl bg-bg-surface border border-slate-700 shadow-card p-4"
             >
-              <p className="text-xs text-slate-500 uppercase tracking-widest mb-3 font-mono">Findings</p>
+              <p className="text-xs text-slate-500 uppercase tracking-widest mb-3 font-mono">
+                Findings
+              </p>
               <div className="flex flex-col gap-2">
-                {analysis.findings.map((f) => (
-                  <div key={f.name} className="flex items-center justify-between gap-2">
-                    <span className="text-xs text-slate-300 truncate">{f.name}</span>
+                {analysis.findings?.map((f, i) => (
+                  <motion.div
+                    key={f.name ?? f.label ?? i}
+                    initial={{ opacity: 0, x: 8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.2 + i * 0.07 }}
+                    className="flex items-center justify-between gap-2"
+                  >
+                    <span className="text-xs text-slate-300 truncate">
+                      {f.name ?? f.label}
+                    </span>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="text-xs font-mono text-slate-400">{formatConfidence(f.confidence)}</span>
-                      <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded-full", getRiskBadgeClasses(f.risk_level))}>
+                      <span className="text-xs font-mono text-slate-400">
+                        {formatConfidence(f.confidence)}
+                      </span>
+                      <span className={cn(
+                        "text-[10px] font-semibold px-1.5 py-0.5 rounded-full",
+                        getRiskBadgeClasses(f.risk_level)
+                      )}>
                         {f.risk_level}
                       </span>
                     </div>
-                  </div>
+                  </motion.div>
                 ))}
               </div>
             </motion.div>
@@ -313,15 +415,40 @@ export default function ReportPage() {
               transition={{ duration: 0.4, delay: 0.26 }}
               className="rounded-xl bg-bg-surface border border-slate-700 shadow-card p-4"
             >
-              <p className="text-xs text-slate-500 uppercase tracking-widest mb-3 font-mono">Sections</p>
+              <p className="text-xs text-slate-500 uppercase tracking-widest mb-3 font-mono">
+                Sections
+              </p>
               <div className="flex flex-col gap-1.5">
-                {sections.map((s) => (
-                  <div key={s.id} className="flex items-center gap-2 text-xs text-slate-400">
+                {sections.map((s, i) => (
+                  <motion.div
+                    key={s.id}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.3 + i * 0.08 }}
+                    className="flex items-center gap-2 text-xs text-slate-400"
+                  >
                     <CheckCircle2 size={12} className="text-green-500 shrink-0" />
                     {s.title}
-                  </div>
+                  </motion.div>
                 ))}
               </div>
+            </motion.div>
+
+            {/* AI info badge */}
+            <motion.div
+              initial={{ opacity: 0, x: 16 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.4, delay: 0.34 }}
+              className="rounded-xl bg-blue-500/5 border border-blue-500/20 p-4"
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles size={12} className="text-blue-400" />
+                <p className="text-xs text-blue-400 font-semibold">AI Generated</p>
+              </div>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Report drafted by Gemini 2.5 Flash from real DenseNet-121 findings.
+                Review before clinical use.
+              </p>
             </motion.div>
 
           </div>
@@ -330,4 +457,3 @@ export default function ReportPage() {
     </div>
   );
 }
-
