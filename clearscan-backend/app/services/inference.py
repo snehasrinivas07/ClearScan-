@@ -56,7 +56,6 @@ def preprocess_image(image_bytes: bytes):
         # Handle 16-bit CT images
         if img.mode == "I;16" or img.mode == "I":
             img_array = np.array(img).astype(np.float32)
-            # Normalise 16-bit to [-1024, 1024] range
             img_array = (img_array / 65535.0) * 2048 - 1024
         else:
             img = img.convert("L")
@@ -64,16 +63,11 @@ def preprocess_image(image_bytes: bytes):
             img_array = np.array(img).astype(np.float32)
             img_array = (img_array / 255.0) * 2048 - 1024
 
-        # Ensure 224x224
-        if img_array.shape != (224, 224):
-            pil = Image.fromarray(
-                ((img_array + 1024) / 2048 * 255).astype(np.uint8)
-            )
-            pil = pil.resize((224, 224), Image.LANCZOS)
-            img_array = np.array(pil).astype(np.float32)
-            img_array = (img_array / 255.0) * 2048 - 1024
+        img_array = np.clip(img_array, -1024, 1024)
 
         tensor = torch.from_numpy(img_array).unsqueeze(0).unsqueeze(0)
+
+        # Original PIL for heatmap overlay
         original_pil = Image.fromarray(
             ((img_array + 1024) / 2048 * 255).clip(0, 255).astype(np.uint8)
         )
