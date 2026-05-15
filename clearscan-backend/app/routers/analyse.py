@@ -6,6 +6,9 @@ Runs MC Dropout inference + Grad-CAM heatmap.
 
 import json
 import logging
+import numpy as np
+from PIL import Image
+import io as python_io
 
 from fastapi import APIRouter, File, Form, UploadFile, HTTPException, status
 
@@ -25,6 +28,41 @@ ALLOWED_TYPES = {
     "image/webp", "image/tiff", "image/tif"
 }
 MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB for CT scans
+
+
+def is_valid_medical_scan(image_bytes: bytes) -> tuple[bool, str]:
+    """
+    Basic heuristic to check if uploaded image looks like
+    a medical scan rather than a regular photograph.
+    Medical scans tend to have:
+    - High contrast (high std deviation)
+    - Predominantly dark background with bright structures
+    - Specific brightness patterns
+    Returns (is_valid, warning_message)
+    """
+    try:
+        img = Image.open(python_io.BytesIO(image_bytes)).convert("L")
+        img_array = np.array(img).astype(np.float32)
+
+        mean_val = img_array.mean()
+        std_val  = img_array.std()
+        dark_pct = (img_array < 30).mean()  # % of very dark pixels
+
+        # Medical scans typically have:
+        # - std > 30 (high contrast)
+        # - at least 10% dark pixels (dark background)
+        # - mean between 20 and 220
+
+        if std_val < 15:
+            return False, "Image appears to have very low contrast — may not be a medical scan."
+        if dark_pct < 0.05:
+            return False, "Image appears to be a regular photograph — please upload a medical scan."
+        if mean_val > 230:
+            return False, "Image appears overexposed — please upload a proper medical scan."
+
+        return True, ""
+    except Exception:
+        return True, ""  # If check fails, allow through
 
 
 @router.post(
@@ -72,6 +110,14 @@ async def analyse_scan(
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File too large. Maximum size is 25MB.",
+        )
+
+    # ── 3b. Validate image looks like a medical scan ──────────────────────────
+    is_valid, warning_msg = is_valid_medical_scan(image_bytes)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid image: {warning_msg} Please upload a valid medical scan (X-ray, CT, or MRI).",
         )
 
     # ── 4. Parse metadata ─────────────────────────────────────────────────────
